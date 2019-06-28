@@ -31,6 +31,8 @@ import com.google.inject.Provides;
 import java.awt.Color;
 import java.awt.Rectangle;
 import static java.lang.Boolean.TRUE;
+
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -98,6 +100,17 @@ public class GroundItemsPlugin extends Plugin
 {
 	// ItemID for coins
 	private static final int COINS = ItemID.COINS_995;
+
+	// items stay on the ground for 30 mins in an instance
+	private static final int INSTANCE_DURATION_MILLIS = 45 * 60 * 1000;
+
+	//untradeables stay on the ground for 150 seconds (http://oldschoolrunescape.wikia.com/wiki/Item#Dropping_and_Destroying)
+	private static final int UNTRADEABLE_DURATION_MILLIS = 150 * 1000;
+
+	//items stay on the ground for 1 hour after death
+	private static final int DEATH_DURATION_MILLIS = 60 * 60 * 1000;
+	private static final int NORMAL_DURATION_MILLIS = 60 * 1000;
+
 	// Ground item menu options
 	private static final int FIRST_OPTION = MenuAction.GROUND_ITEM_FIRST_OPTION.getId();
 	private static final int SECOND_OPTION = MenuAction.GROUND_ITEM_SECOND_OPTION.getId();
@@ -280,6 +293,15 @@ public class GroundItemsPlugin extends Plugin
 	public void onNpcLootReceived(NpcLootReceived npcLootReceived)
 	{
 		Collection<ItemStack> items = npcLootReceived.getItems();
+		items.forEach(item ->
+			{
+				GroundItem.GroundItemKey groundItemKey = new GroundItem.GroundItemKey(item.getId(), npcLootReceived.getNpc().getWorldLocation());
+				if (collectedGroundItems.containsKey(groundItemKey))
+				{
+					collectedGroundItems.get(groundItemKey).setOwnedByPlayer(true);
+				}
+			}
+		);
 		lootReceived(items);
 	}
 
@@ -369,6 +391,22 @@ public class GroundItemsPlugin extends Plugin
 		final ItemComposition itemComposition = itemManager.getItemComposition(itemId);
 		final int realItemId = itemComposition.getNote() != -1 ? itemComposition.getLinkedNoteId() : itemId;
 		final int alchPrice = Math.round(itemComposition.getPrice() * Constants.HIGH_ALCHEMY_MULTIPLIER);
+		int durationMillis;
+
+		if (client.isInInstancedRegion())
+		{
+			durationMillis = INSTANCE_DURATION_MILLIS;
+		}
+		else if (!itemComposition.isTradeable() && realItemId != COINS)
+		{
+			durationMillis = UNTRADEABLE_DURATION_MILLIS;
+		}
+		else
+		{
+			durationMillis = NORMAL_DURATION_MILLIS;
+		}
+
+		WorldPoint playerLocation = client.getLocalPlayer().getWorldLocation();
 
 		final GroundItem groundItem = GroundItem.builder()
 			.id(itemId)
@@ -379,10 +417,14 @@ public class GroundItemsPlugin extends Plugin
 			.haPrice(alchPrice)
 			.height(tile.getItemLayer().getHeight())
 			.tradeable(itemComposition.isTradeable())
+			.droppedInstant(Instant.now())
+			.durationMillis(durationMillis)
+			.isAlwaysPrivate(client.isInInstancedRegion() || (!itemComposition.isTradeable() && realItemId != COINS))
+			.isOwnedByPlayer(tile.getWorldLocation().equals(playerLocation))
 			.build();
 
 
-		// Update item price in case it is coins
+		// Update item price in case it is coins & pretend they are a regular tradable item
 		if (realItemId == COINS)
 		{
 			groundItem.setHaPrice(1);
